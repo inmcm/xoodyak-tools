@@ -81,8 +81,7 @@ func hashStdIn() int {
 		printHelp()
 		return 1
 	}
-	// if info.Mode()&os.ModeNamedPipe == 0 {
-	if info.Mode()&os.ModeCharDevice == 0 {
+	if info.Mode()&os.ModeNamedPipe == 0 && info.Mode()&os.ModeCharDevice == 0 {
 		printHelp()
 		return 1
 	}
