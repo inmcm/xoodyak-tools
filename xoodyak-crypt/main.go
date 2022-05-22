@@ -139,16 +139,12 @@ func main() {
 				outputFile = inputFile[:len(inputFile)-len(path.Ext(inputFile))] + ".xdyk"
 				outputFileTmp = outputFile + ".tmp"
 			}
-			tag.raw, err = encryptFile(key.raw, ad.raw, nonce.raw, inputFile, outputFileTmp)
+			err = encryptFile(key.raw, ad.raw, nonce.raw, inputFile, outputFileTmp)
 			if err != nil {
 				fmt.Printf("%s", err)
 				os.Exit(1)
 			}
 		}
-		fmt.Printf("Tag: %x\n", tag.raw)
-		fmt.Printf("Length: %d(%d)\n", len(tag.raw), tag.length)
-		tag.encoded = base64.StdEncoding.EncodeToString(tag.raw)
-		fmt.Printf("Tag (Encoded): %s\n", tag.encoded)
 	} else if command.Name() == "decrypt" {
 		if len(command.Args()) == 0 {
 			if outputFile == "" {
@@ -249,22 +245,13 @@ func encryptStdIn(key, ad, nonce []byte, ciphertext string) (tag []byte, err err
 
 }
 
-func encryptFile(key, ad, nonce []byte, plaintext, ciphertext string) (tag []byte, err error) {
-	tag = []byte{}
-	content, err := os.ReadFile(plaintext)
+func encryptFile(key, ad, nonce []byte, plaintext, ciphertext string) (err error) {
+	in, err := os.Open(plaintext)
 	if err != nil {
 		err = fmt.Errorf("xoodyak encrypt: %w", err)
 		return
 	}
-
 	fmt.Printf("\tKEY:%x\n\tNONCE:%x\n\tAD:%x\n", key, nonce, ad)
-	ct, tag, err := xoodyak.CryptoEncryptAEAD(content, key, nonce, ad)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
-	fmt.Printf("LEN CT:%d\n", len(ct))
-	fmt.Printf("CT3: %x\n", ct[:54])
 
 	out, err := os.Create(ciphertext)
 	if err != nil {
@@ -272,13 +259,19 @@ func encryptFile(key, ad, nonce []byte, plaintext, ciphertext string) (tag []byt
 		return
 	}
 	defer out.Close()
-
-	_, err = out.Write(ct)
+	encOut, err := xoodyak.NewEncryptStream(out, key, nonce, ad)
 	if err != nil {
 		err = fmt.Errorf("xoodyak encrypt: %w", err)
 		return
 	}
-	_, err = out.Write(tag)
+
+	io.Copy(encOut, in)
+	if err != nil {
+		err = fmt.Errorf("xoodyak encrypt: %w", err)
+		return
+	}
+
+	err = encOut.Close()
 	if err != nil {
 		err = fmt.Errorf("xoodyak encrypt: %w", err)
 	}
@@ -332,26 +325,33 @@ func decryptStdIn(key, ad, nonce []byte, plaintext string) (err error) {
 	return
 }
 
+func encryptStream(key, ad, nonce []byte, plaintext io.Reader, ciphertext io.Writer) (err error) {
+	encOut, err := xoodyak.NewEncryptStream(ciphertext, key, nonce, ad)
+	if err != nil {
+		err = fmt.Errorf("xoodyak encrypt: %w", err)
+		return
+	}
+
+	io.Copy(encOut, plaintext)
+	if err != nil {
+		err = fmt.Errorf("xoodyak encrypt: %w", err)
+		return
+	}
+
+	err = encOut.Close()
+	if err != nil {
+		err = fmt.Errorf("xoodyak encrypt: %w", err)
+	}
+	return
+}
+
 func decryptFile(key, ad, nonce []byte, ciphertext, plaintext string) (err error) {
-	content, err := os.ReadFile(ciphertext)
+	in, err := os.Open(ciphertext)
 	if err != nil {
 		err = fmt.Errorf("xoodyak decrypt: %w", err)
 		return err
 	}
-
-	foundTag := content[len(content)-xoodyak.TagLen:]
-	pt, valid, err := xoodyak.CryptoDecryptAEAD(content[:len(content)-xoodyak.TagLen], key, nonce, ad, foundTag)
-
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: %w", err)
-		return err
-	}
-
-	if !valid {
-		invalidErr := errors.New("authentication failed")
-		err = fmt.Errorf("xoodyak decrypt: %w", invalidErr)
-		return err
-	}
+	fmt.Printf("\tKEY:%x\n\tNONCE:%x\n\tAD:%x\n", key, nonce, ad)
 
 	out, err := os.Create(plaintext)
 	if err != nil {
@@ -359,15 +359,21 @@ func decryptFile(key, ad, nonce []byte, ciphertext, plaintext string) (err error
 		return err
 	}
 	defer out.Close()
+	return decryptStream(key, ad, nonce, in, out)
+}
 
-	_, err = out.Write(pt)
+func decryptStream(key, ad, nonce []byte, ciphertext io.Reader, plaintext io.Writer) (err error) {
+	decIn, err := xoodyak.NewDecryptStream(ciphertext, key, nonce, ad)
 	if err != nil {
 		err = fmt.Errorf("xoodyak decrypt: %w", err)
 		return err
 	}
-
+	_, err = io.Copy(plaintext, decIn)
+	if err != nil {
+		err = fmt.Errorf("xoodyak decrypt: %w", err)
+		return err
+	}
 	return nil
-
 }
 
 func (ct *component) ParseInputs() error {
