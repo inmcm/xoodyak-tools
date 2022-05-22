@@ -2,10 +2,8 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -128,7 +126,7 @@ func main() {
 				outputFileTmp = outputFile + ".tmp"
 			}
 
-			tag.raw, err = encryptStdIn(key.raw, ad.raw, nonce.raw, outputFileTmp)
+			err = encryptStdIn(key.raw, ad.raw, nonce.raw, outputFileTmp)
 			if err != nil {
 				fmt.Printf("%s", err)
 				os.Exit(1)
@@ -200,8 +198,7 @@ func printOutput(hash []byte, size int64, name string) {
 
 }
 
-func encryptStdIn(key, ad, nonce []byte, ciphertext string) (tag []byte, err error) {
-	tag = []byte{}
+func encryptStdIn(key, ad, nonce []byte, ciphertext string) (err error) {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		err = fmt.Errorf("xoodyak encrypt: cannot stat STDIN - %w", err)
@@ -212,18 +209,6 @@ func encryptStdIn(key, ad, nonce []byte, ciphertext string) (tag []byte, err err
 		return
 	}
 	plaintextReader := bufio.NewReader(os.Stdin)
-	content := bytes.NewBuffer([]byte{})
-	_, err = io.Copy(content, plaintextReader)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: failed to copy plaintext content - %w", err)
-		return
-	}
-
-	ct, tag, err := xoodyak.CryptoEncryptAEAD(content.Bytes(), key, nonce, ad)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
 
 	out, err := os.Create(ciphertext)
 	if err != nil {
@@ -232,16 +217,7 @@ func encryptStdIn(key, ad, nonce []byte, ciphertext string) (tag []byte, err err
 	}
 	defer out.Close()
 
-	_, err = out.Write(ct)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
-	_, err = out.Write(tag)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-	}
-	return
+	return encryptStream(key, ad, nonce, plaintextReader, out)
 
 }
 
@@ -259,23 +235,8 @@ func encryptFile(key, ad, nonce []byte, plaintext, ciphertext string) (err error
 		return
 	}
 	defer out.Close()
-	encOut, err := xoodyak.NewEncryptStream(out, key, nonce, ad)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
 
-	io.Copy(encOut, in)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
-
-	err = encOut.Close()
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-	}
-	return
+	return encryptStream(key, ad, nonce, in, out)
 
 }
 
@@ -289,40 +250,16 @@ func decryptStdIn(key, ad, nonce []byte, plaintext string) (err error) {
 		err = fmt.Errorf("xoodyak decrypt: STDIN not a valid pipe")
 		return
 	}
-	plaintextReader := bufio.NewReader(os.Stdin)
-	content := bytes.NewBuffer([]byte{})
-	_, err = io.Copy(content, plaintextReader)
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: failed to copy ciphertext content - %w", err)
-		return
-	}
+	ctRd := bufio.NewReader(os.Stdin)
 
-	foundTag := content.Bytes()[len(content.Bytes())-xoodyak.TagLen:]
-	pt, valid, err := xoodyak.CryptoDecryptAEAD(content.Bytes()[:len(content.Bytes())-xoodyak.TagLen], key, nonce, ad, foundTag)
-
+	ptWr, err := os.Create(plaintext)
 	if err != nil {
 		err = fmt.Errorf("xoodyak decrypt: %w", err)
 		return
 	}
+	defer ptWr.Close()
 
-	if !valid {
-		invalidErr := errors.New("authentication failed")
-		err = fmt.Errorf("xoodyak decrypt: %w", invalidErr)
-		return
-	}
-
-	out, err := os.Create(plaintext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: %w", err)
-		return
-	}
-	defer out.Close()
-
-	_, err = out.Write(pt)
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: %w", err)
-	}
-	return
+	return decryptStream(key, ad, nonce, ctRd, ptWr)
 }
 
 func encryptStream(key, ad, nonce []byte, plaintext io.Reader, ciphertext io.Writer) (err error) {
