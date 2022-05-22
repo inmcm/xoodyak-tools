@@ -15,20 +15,13 @@ import (
 	"github.com/inmcm/xoodoo/xoodyak"
 )
 
-const (
-	// TODO FIXME the package to export this constant
-	TagLen   = 16
-	KeyLen   = 16
-	NonceLen = 16
-)
-
 var (
 	quiet      bool
 	outputFile string
 
 	key component = component{
 		name:   "key",
-		length: KeyLen,
+		length: xoodyak.KeyLen,
 	}
 	ad component = component{
 		name:   "metadata",
@@ -36,11 +29,11 @@ var (
 	}
 	tag component = component{
 		name:   "tag",
-		length: TagLen,
+		length: xoodyak.TagLen,
 	}
 	nonce component = component{
 		name:   "nonce",
-		length: NonceLen,
+		length: xoodyak.NonceLen,
 	}
 )
 
@@ -264,11 +257,14 @@ func encryptFile(key, ad, nonce []byte, plaintext, ciphertext string) (tag []byt
 		return
 	}
 
+	fmt.Printf("\tKEY:%x\n\tNONCE:%x\n\tAD:%x\n", key, nonce, ad)
 	ct, tag, err := xoodyak.CryptoEncryptAEAD(content, key, nonce, ad)
 	if err != nil {
 		err = fmt.Errorf("xoodyak encrypt: %w", err)
 		return
 	}
+	fmt.Printf("LEN CT:%d\n", len(ct))
+	fmt.Printf("CT3: %x\n", ct[:54])
 
 	out, err := os.Create(ciphertext)
 	if err != nil {
@@ -308,8 +304,8 @@ func decryptStdIn(key, ad, nonce []byte, plaintext string) (err error) {
 		return
 	}
 
-	foundTag := content.Bytes()[len(content.Bytes())-TagLen:]
-	pt, valid, err := xoodyak.CryptoDecryptAEAD(content.Bytes()[:len(content.Bytes())-TagLen], key, nonce, ad, foundTag)
+	foundTag := content.Bytes()[len(content.Bytes())-xoodyak.TagLen:]
+	pt, valid, err := xoodyak.CryptoDecryptAEAD(content.Bytes()[:len(content.Bytes())-xoodyak.TagLen], key, nonce, ad, foundTag)
 
 	if err != nil {
 		err = fmt.Errorf("xoodyak decrypt: %w", err)
@@ -343,8 +339,8 @@ func decryptFile(key, ad, nonce []byte, ciphertext, plaintext string) (err error
 		return err
 	}
 
-	foundTag := content[len(content)-TagLen:]
-	pt, valid, err := xoodyak.CryptoDecryptAEAD(content[:len(content)-TagLen], key, nonce, ad, foundTag)
+	foundTag := content[len(content)-xoodyak.TagLen:]
+	pt, valid, err := xoodyak.CryptoDecryptAEAD(content[:len(content)-xoodyak.TagLen], key, nonce, ad, foundTag)
 
 	if err != nil {
 		err = fmt.Errorf("xoodyak decrypt: %w", err)
