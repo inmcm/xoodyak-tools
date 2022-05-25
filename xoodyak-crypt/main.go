@@ -15,6 +15,7 @@ import (
 
 var (
 	quiet      bool
+	useStdOut  bool
 	outputFile string
 
 	key component = component{
@@ -72,6 +73,9 @@ func main() {
 		sub.StringVar(&outputFile, "o", "", "output file path: ciphertext for encryption, plaintext for decryption")
 		sub.StringVar(&outputFile, "output-file", "", "output file path: ciphertext for encryption, plaintext for decryption")
 
+		sub.BoolVar(&useStdOut, "p", false, "send encryption/decryption output to STDOUT")
+		sub.BoolVar(&useStdOut, "pipe-output", false, "send encryption/decryption output to STDOUT")
+
 		sub.BoolVar(&quiet, "q", false, "quiet mode - only the checksum is printed out")
 		sub.BoolVar(&quiet, "quiet", false, "quiet mode - only the checksum is printed out")
 
@@ -101,78 +105,106 @@ func main() {
 	err = ad.ParseInputs()
 	err = nonce.ParseInputs()
 
-	fmt.Printf("Key: %x\n", key.raw)
-	fmt.Printf("Length: %d(%d)\n", len(key.raw), key.length)
-	fmt.Printf("Key (Encoded): %s\n", key.encoded)
-	fmt.Printf("Key (File): %s\n", key.file)
+	fmt.Fprintf(os.Stderr, "Key: %x\n", key.raw)
+	fmt.Fprintf(os.Stderr, "Length: %d(%d)\n", len(key.raw), key.length)
+	fmt.Fprintf(os.Stderr, "Key (Encoded): %s\n", key.encoded)
+	fmt.Fprintf(os.Stderr, "Key (File): %s\n", key.file)
 
-	fmt.Printf("Metadata: %x\n", ad.raw)
-	fmt.Printf("Length: %d(%d)\n", len(ad.raw), ad.length)
-	fmt.Printf("Metadata (Encoded): %s\n", ad.encoded)
-	fmt.Printf("Metadata (File): %s\n", ad.file)
+	fmt.Fprintf(os.Stderr, "Metadata: %x\n", ad.raw)
+	fmt.Fprintf(os.Stderr, "Length: %d(%d)\n", len(ad.raw), ad.length)
+	fmt.Fprintf(os.Stderr, "Metadata (Encoded): %s\n", ad.encoded)
+	fmt.Fprintf(os.Stderr, "Metadata (File): %s\n", ad.file)
 
-	fmt.Printf("Nonce: %x\n", nonce.raw)
-	fmt.Printf("Length: %d(%d)\n", len(nonce.raw), nonce.length)
-	fmt.Printf("Nonce (Encoded): %s\n", nonce.encoded)
-	fmt.Printf("Nonce (File): %s\n", nonce.file)
+	fmt.Fprintf(os.Stderr, "Nonce: %x\n", nonce.raw)
+	fmt.Fprintf(os.Stderr, "Length: %d(%d)\n", len(nonce.raw), nonce.length)
+	fmt.Fprintf(os.Stderr, "Nonce (Encoded): %s\n", nonce.encoded)
+	fmt.Fprintf(os.Stderr, "Nonce (File): %s\n", nonce.file)
 
+	useStdIn := len(command.Args()) == 0
+
+	// Setup output file names: specified file, alternate extension file, STDOUT
+	defaultExt := ".plain"
+	if command.Name() == "encrypt" {
+		defaultExt = ".xdyk"
+	}
+	if outputFile == "" {
+		if useStdIn {
+			outputFile = "stdin" + defaultExt
+		} else {
+			inputFile := command.Arg(0)
+			outputFile = inputFile[:len(inputFile)-len(path.Ext(inputFile))] + defaultExt
+		}
+	}
 	outputFileTmp := outputFile + ".tmp"
 	defer os.Remove(outputFileTmp)
 
-	if command.Name() == "encrypt" {
-		if len(command.Args()) == 0 {
-			if outputFile == "" {
-				outputFile = "stdin.xdyk"
-				outputFileTmp = outputFile + ".tmp"
-			}
-
-			err = encryptStdIn(key.raw, ad.raw, nonce.raw, outputFileTmp)
-			if err != nil {
-				fmt.Printf("%s", err)
-				os.Exit(1)
-			}
-		} else {
-			inputFile := command.Arg(0)
-			if outputFile == "" {
-				outputFile = inputFile[:len(inputFile)-len(path.Ext(inputFile))] + ".xdyk"
-				outputFileTmp = outputFile + ".tmp"
-			}
-			err = encryptFile(key.raw, ad.raw, nonce.raw, inputFile, outputFileTmp)
-			if err != nil {
-				fmt.Printf("%s", err)
-				os.Exit(1)
-			}
+	// Setup Output writer - file or STDOUT
+	var outputFd io.WriteCloser
+	if useStdOut {
+		_, err := os.Stdout.Stat()
+		if err != nil {
+			err = fmt.Errorf("xoodyak-crypt: cannot stat STDOUT - %w", err)
+			os.Exit(1)
 		}
-	} else if command.Name() == "decrypt" {
-		if len(command.Args()) == 0 {
-			if outputFile == "" {
-				outputFile = "stdin.plain"
-				outputFileTmp = outputFile + ".tmp"
-			}
-			err = decryptStdIn(key.raw, ad.raw, nonce.raw, outputFileTmp)
-			if err != nil {
-				fmt.Printf("%s", err)
-				os.Exit(1)
-			}
-		} else {
-			inputFile := command.Arg(0)
-			if outputFile == "" {
-				outputFile = inputFile[:len(inputFile)-len(path.Ext(inputFile))] + ".plain"
-				outputFileTmp = outputFile + ".tmp"
-			}
-			err = decryptFile(key.raw, ad.raw, nonce.raw, inputFile, outputFileTmp)
-			if err != nil {
-				fmt.Printf("%s", err)
-				os.Exit(1)
-			}
+		outputFd = os.Stdout
+	} else {
+		outputFd, err = os.Create(outputFileTmp)
+		if err != nil {
+			err = fmt.Errorf("xoodyak encrypt: %w", err)
+			os.Exit(1)
 		}
-		fmt.Println("decrypt successful")
+		defer outputFd.Close()
 	}
-	err = os.Rename(outputFileTmp, outputFile)
+	outputFdBuf := bufio.NewWriter(outputFd)
+
+	// Setup input reader; STDIN or file
+	var inputFd io.Reader
+	if useStdIn {
+		info, err := os.Stdin.Stat()
+		if err != nil {
+			err = fmt.Errorf("xoodyak-crypt: cannot stat STDIN - %w", err)
+			os.Exit(1)
+		}
+		if info.Mode()&os.ModeNamedPipe == 0 && info.Mode()&os.ModeCharDevice == 0 {
+			err = fmt.Errorf("xoodyak-crypt: STDIN not a valid pipe")
+			os.Exit(1)
+		}
+		inputFd = bufio.NewReader(os.Stdin)
+
+	} else {
+		inputFd, err = os.Open(command.Arg(0))
+		if err != nil {
+			err = fmt.Errorf("xoodyak encrypt: %w", err)
+			os.Exit(1)
+		}
+	}
+	// Use Buffered IO for Reads
+	inputFdBuf := bufio.NewReader(inputFd)
+
+	// Perform encryption or decryption
+	switch command.Name() {
+	case "encrypt":
+		err = encryptStream(key.raw, ad.raw, nonce.raw, inputFdBuf, outputFdBuf)
+	case "decrypt":
+		err = decryptStream(key.raw, ad.raw, nonce.raw, inputFdBuf, outputFdBuf)
+	default:
+		err = fmt.Errorf("invalid crypt command: %s", command.Name())
+	}
 	if err != nil {
-		fmt.Printf("xoodyak rename: %s", err)
+		fmt.Printf("xoodyak crypt error: %s", err)
 		os.Exit(1)
 	}
+	outputFdBuf.Flush()
+	outputFd.Close()
+
+	if !useStdOut {
+		err = os.Rename(outputFileTmp, outputFile)
+		if err != nil {
+			fmt.Printf("xoodyak rename: %s", err)
+			os.Exit(1)
+		}
+	}
+	fmt.Fprintln(os.Stderr, "crypt operation successful")
 }
 
 func printHelp() {
@@ -193,7 +225,7 @@ func printOutput(hash []byte, size int64, name string) {
 		if name != "" {
 			printName = name + " "
 		}
-		fmt.Printf("%x %s(%d bytes) \n", hash, printName, size)
+		fmt.Fprintf(os.Stderr, "%x %s(%d bytes) \n", hash, printName, size)
 	}
 
 }
