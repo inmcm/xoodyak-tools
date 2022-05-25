@@ -204,7 +204,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	fmt.Fprintln(os.Stderr, "crypt operation successful")
+	fmt.Fprintf(os.Stderr, "%s operation successful\n", command.Name())
 }
 
 func printHelp() {
@@ -215,83 +215,6 @@ When no FILE is provided, read from STDIN
 	-q, --quiet         only print the calculated checksum 
 	-h, --help          print this message
 `, os.Args[0])
-}
-
-func printOutput(hash []byte, size int64, name string) {
-	if quiet {
-		fmt.Printf("%x\n", hash)
-	} else {
-		printName := name
-		if name != "" {
-			printName = name + " "
-		}
-		fmt.Fprintf(os.Stderr, "%x %s(%d bytes) \n", hash, printName, size)
-	}
-
-}
-
-func encryptStdIn(key, ad, nonce []byte, ciphertext string) (err error) {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: cannot stat STDIN - %w", err)
-		return
-	}
-	if info.Mode()&os.ModeNamedPipe == 0 && info.Mode()&os.ModeCharDevice == 0 {
-		err = fmt.Errorf("xoodyak encrypt: STDIN not a valid pipe")
-		return
-	}
-	plaintextReader := bufio.NewReader(os.Stdin)
-
-	out, err := os.Create(ciphertext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
-	defer out.Close()
-
-	return encryptStream(key, ad, nonce, plaintextReader, out)
-
-}
-
-func encryptFile(key, ad, nonce []byte, plaintext, ciphertext string) (err error) {
-	in, err := os.Open(plaintext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
-	fmt.Printf("\tKEY:%x\n\tNONCE:%x\n\tAD:%x\n", key, nonce, ad)
-
-	out, err := os.Create(ciphertext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak encrypt: %w", err)
-		return
-	}
-	defer out.Close()
-
-	return encryptStream(key, ad, nonce, in, out)
-
-}
-
-func decryptStdIn(key, ad, nonce []byte, plaintext string) (err error) {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: cannot stat STDIN - %w", err)
-		return
-	}
-	if info.Mode()&os.ModeNamedPipe == 0 && info.Mode()&os.ModeCharDevice == 0 {
-		err = fmt.Errorf("xoodyak decrypt: STDIN not a valid pipe")
-		return
-	}
-	ctRd := bufio.NewReader(os.Stdin)
-
-	ptWr, err := os.Create(plaintext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: %w", err)
-		return
-	}
-	defer ptWr.Close()
-
-	return decryptStream(key, ad, nonce, ctRd, ptWr)
 }
 
 func encryptStream(key, ad, nonce []byte, plaintext io.Reader, ciphertext io.Writer) (err error) {
@@ -312,23 +235,6 @@ func encryptStream(key, ad, nonce []byte, plaintext io.Reader, ciphertext io.Wri
 		err = fmt.Errorf("xoodyak encrypt: %w", err)
 	}
 	return
-}
-
-func decryptFile(key, ad, nonce []byte, ciphertext, plaintext string) (err error) {
-	in, err := os.Open(ciphertext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: %w", err)
-		return err
-	}
-	fmt.Printf("\tKEY:%x\n\tNONCE:%x\n\tAD:%x\n", key, nonce, ad)
-
-	out, err := os.Create(plaintext)
-	if err != nil {
-		err = fmt.Errorf("xoodyak decrypt: %w", err)
-		return err
-	}
-	defer out.Close()
-	return decryptStream(key, ad, nonce, in, out)
 }
 
 func decryptStream(key, ad, nonce []byte, ciphertext io.Reader, plaintext io.Writer) (err error) {
