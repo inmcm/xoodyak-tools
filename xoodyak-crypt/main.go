@@ -19,20 +19,23 @@ var (
 	outputFile string
 
 	key component = component{
-		name:   "key",
-		length: xoodyak.KeyLen,
+		name:      "key",
+		length:    xoodyak.KeyLen,
+		generated: false,
 	}
 	ad component = component{
-		name:   "metadata",
-		length: -1,
+		name:      "metadata",
+		length:    -1,
+		generated: false,
 	}
 	tag component = component{
 		name:   "tag",
 		length: xoodyak.TagLen,
 	}
 	nonce component = component{
-		name:   "nonce",
-		length: xoodyak.NonceLen,
+		name:      "nonce",
+		length:    xoodyak.NonceLen,
+		generated: false,
 	}
 )
 
@@ -82,7 +85,8 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		fmt.Println("expected 'encrypt' or 'decrypt' subcommands")
+		consolePrintln("expected 'encrypt' or 'encrypt' subcommands")
+		printHelp()
 		os.Exit(1)
 	}
 
@@ -95,30 +99,27 @@ func main() {
 		decryptCmd.Parse(os.Args[2:])
 		command = decryptCmd
 	default:
-		fmt.Println("expected 'encrypt' or 'encrypt' subcommands")
+		consolePrintln("expected 'encrypt' or 'encrypt' subcommands")
+		printHelp()
 		os.Exit(1)
 	}
 
-	// flag.Parse()
 	var err error
 	err = key.ParseInputs()
+	if err != nil {
+		consolePrintf("xoodyak key error: %s\n", err)
+		os.Exit(1)
+	}
 	err = ad.ParseInputs()
+	if err != nil {
+		consolePrintf("xoodyak metadata error: %s\n", err)
+		os.Exit(1)
+	}
 	err = nonce.ParseInputs()
-
-	fmt.Fprintf(os.Stderr, "Key: %x\n", key.raw)
-	fmt.Fprintf(os.Stderr, "Length: %d(%d)\n", len(key.raw), key.length)
-	fmt.Fprintf(os.Stderr, "Key (Encoded): %s\n", key.encoded)
-	fmt.Fprintf(os.Stderr, "Key (File): %s\n", key.file)
-
-	fmt.Fprintf(os.Stderr, "Metadata: %x\n", ad.raw)
-	fmt.Fprintf(os.Stderr, "Length: %d(%d)\n", len(ad.raw), ad.length)
-	fmt.Fprintf(os.Stderr, "Metadata (Encoded): %s\n", ad.encoded)
-	fmt.Fprintf(os.Stderr, "Metadata (File): %s\n", ad.file)
-
-	fmt.Fprintf(os.Stderr, "Nonce: %x\n", nonce.raw)
-	fmt.Fprintf(os.Stderr, "Length: %d(%d)\n", len(nonce.raw), nonce.length)
-	fmt.Fprintf(os.Stderr, "Nonce (Encoded): %s\n", nonce.encoded)
-	fmt.Fprintf(os.Stderr, "Nonce (File): %s\n", nonce.file)
+	if err != nil {
+		consolePrintf("xoodyak nonce error: %s\n", err)
+		os.Exit(1)
+	}
 
 	useStdIn := len(command.Args()) == 0
 
@@ -191,7 +192,7 @@ func main() {
 		err = fmt.Errorf("invalid crypt command: %s", command.Name())
 	}
 	if err != nil {
-		fmt.Printf("xoodyak crypt error: %s", err)
+		consolePrintf("xoodyak crypt error: %s", err)
 		os.Exit(1)
 	}
 	outputFdBuf.Flush()
@@ -200,15 +201,29 @@ func main() {
 	if !useStdOut {
 		err = os.Rename(outputFileTmp, outputFile)
 		if err != nil {
-			fmt.Printf("xoodyak rename: %s", err)
+			consolePrintf("xoodyak rename: %s", err)
 			os.Exit(1)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "%s operation successful\n", command.Name())
+	consolePrintf("%s operation successful\n", command.Name())
+}
+
+func consolePrintf(format string, a ...interface{}) (n int, err error) {
+	if !quiet {
+		return fmt.Fprintf(os.Stderr, format, a...)
+	}
+	return 0, nil
+}
+
+func consolePrintln(a ...interface{}) (n int, err error) {
+	if !quiet {
+		return fmt.Fprintln(os.Stderr, a...)
+	}
+	return 0, nil
 }
 
 func printHelp() {
-	fmt.Printf(`Usage: %s [OPTION]... [FILE].. 
+	consolePrintf(`Usage: %s [OPTION]... [FILE].. 
 Calculate and print the Xoodyak hash and number of bytes processed
 
 When no FILE is provided, read from STDIN
@@ -268,6 +283,9 @@ func (ct *component) ParseInputs() error {
 			return fmt.Errorf("%s file: %w", ct.name, err)
 		}
 		readsize := fileinfo.Size()
+		if readsize == 0 && ct.length > 0 {
+			return fmt.Errorf("%s file (%s) contains 0 bytes; requires %d bytes", ct.name, ct.file, ct.length)
+		}
 		if ct.length > 0 {
 			readsize = int64(ct.length)
 		}
@@ -279,7 +297,7 @@ func (ct *component) ParseInputs() error {
 
 		}
 		if n < ct.length {
-			fmt.Printf("%s file: must be at least %d bytes long (input is %d bytes)\n", ct.name, ct.length, n)
+			consolePrintf("%s file (%s): must be at least %d bytes long (input is %d bytes)\n", ct.name, ct.file, ct.length, n)
 		}
 		ct.length = len(ct.raw)
 
@@ -305,9 +323,10 @@ func (ct *component) ParseInputs() error {
 		ct.raw = make([]byte, ct.length)
 		_, err := rand.Read(ct.raw[:])
 		if err != nil {
-			fmt.Printf("%s generation: %s\n", ct.name, err)
+			return fmt.Errorf("%s generation: %s", ct.name, err)
 
 		}
+		ct.generated = true
 	}
 	if ct.encoded == "" {
 		ct.encoded = base64.StdEncoding.EncodeToString(ct.raw)
