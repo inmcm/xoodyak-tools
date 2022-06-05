@@ -58,7 +58,9 @@ d06970bd9c30ab9b1cfa58f225df7241f5c8e5330cb119393e540ffd81253779 test.txt (13 by
 d06970bd9c30ab9b1cfa58f225df7241f5c8e5330cb119393e540ffd81253779 test.plain (13 bytes)
 ```
 
-Optional metadata may also be included in the encryption/decryption process. The input must be base64 encoded. This value will be written into the configuration file along with the key and nonce. An optional output file path (absolute or realtive) can also be specified.
+Optional metadata may also be included in the encryption/decryption process. The input must be a base64 encoded string. This value will be written into the configuration file along with the key and nonce. 
+
+An optional output file path (absolute or relative) can also be specified.
 
 ```sh
 % TIMESTAMP=$(date +%s | base64)
@@ -127,7 +129,7 @@ encrypt operation successful
 ### STDIN/STDOUT Usage
 
 To allow for composable shell scripting, reading and writing to `STDIN`/`STDOUT` is supported.
-If no input file is provided, bytes are read from STDIN instead. The default output file name will being with `stdin` 
+If no input file is provided, bytes are read from `STDIN` instead. The default output file name will being with `stdin` 
 
 ```sh
 % cat test.txt | xoodyak-crypt encrypt -C cfg
