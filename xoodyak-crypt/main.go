@@ -74,6 +74,8 @@ func main() {
 
 		sub.StringVar(&cfgFile, "C", "", "")
 		sub.StringVar(&cfgFile, "cfg-file", "", "")
+
+		sub.Usage = printHelp
 	}
 
 	if len(os.Args) < 2 {
@@ -96,6 +98,7 @@ func main() {
 		printHelp()
 		os.Exit(1)
 	}
+	command.Usage = printHelp
 
 	var err error
 	cfgDataEmpty := parsing.Configuration{}
@@ -227,7 +230,7 @@ func main() {
 func printHelp() {
 	console.Printf(`Usage: %s encrypt|decrypt [OPTIONS]... [FILE]
 Encrypt or Decrypt provided bytes using a provided (or generated) key, nonce and optional metadata
-Encryption generates ciphertext bytes and an authentication tag
+Encryption generates ciphertext bytes and an appended authentication tag
 Decryption returns the original plaintext input
 
 When no FILE is provided, read from STDIN
