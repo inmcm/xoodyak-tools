@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"io"
@@ -11,42 +9,34 @@ import (
 	"path"
 
 	"github.com/inmcm/xoodoo/xoodyak"
+	"github.com/inmcm/xoodyak-tools/xoodyak-crypt/console"
+	"github.com/inmcm/xoodyak-tools/xoodyak-crypt/parsing"
 )
 
 var (
 	quiet      bool
 	useStdOut  bool
 	outputFile string
+	cfgFile    string
 
-	key component = component{
-		name:      "key",
-		length:    xoodyak.KeyLen,
-		generated: false,
+	cfgShouldExist bool = false
+
+	cryptoKey parsing.Component = parsing.Component{
+		Name:      "key",
+		Length:    xoodyak.KeyLen,
+		Generated: false,
 	}
-	ad component = component{
-		name:      "metadata",
-		length:    -1,
-		generated: false,
+	cryptoAD parsing.Component = parsing.Component{
+		Name:      "metadata",
+		Length:    -1,
+		Generated: false,
 	}
-	tag component = component{
-		name:   "tag",
-		length: xoodyak.TagLen,
-	}
-	nonce component = component{
-		name:      "nonce",
-		length:    xoodyak.NonceLen,
-		generated: false,
+	cryptoNonce parsing.Component = parsing.Component{
+		Name:      "nonce",
+		Length:    xoodyak.NonceLen,
+		Generated: false,
 	}
 )
-
-type component struct {
-	name      string // component name
-	raw       []byte // bytes read/decoded
-	file      string // absolute path to file containing bytes
-	encoded   string // Base64 encoded version
-	length    int    // Required/populated length, -1 if unlimited
-	generated bool
-}
 
 func main() {
 
@@ -55,23 +45,23 @@ func main() {
 
 	// Add all common argument flags to sub-commands
 	for _, sub := range []*flag.FlagSet{encryptCmd, decryptCmd} {
-		sub.StringVar(&key.encoded, "k", "", "encrypt/decrypt key is provided base64 encoded string")
-		sub.StringVar(&key.encoded, "key-string", "", "encryption key input is a base64 encoded string")
+		sub.StringVar(&cryptoKey.Encoded, "k", "", "encrypt/decrypt key is provided as base64 encoded string")
+		sub.StringVar(&cryptoKey.Encoded, "key", "", "encrypt/decrypt key is provided as base64 encoded string")
 
-		sub.StringVar(&key.file, "K", "", "encryption key is first 16 bytes read from provided path")
-		sub.StringVar(&key.file, "key-file", "", "encryption key is first 16 bytes read from provided path")
+		sub.StringVar(&cryptoKey.File, "K", "", "encryption key is first 16 bytes read from provided path")
+		sub.StringVar(&cryptoKey.File, "key-file", "", "encryption key is first 16 bytes read from provided path")
 
-		sub.StringVar(&ad.encoded, "m", "", "optional associated metadata is provided base64 encoded string")
-		sub.StringVar(&ad.encoded, "metadata", "", "optional associated metadata is provided base64 encoded string")
+		sub.StringVar(&cryptoAD.Encoded, "m", "", "optional associated metadata is provided base64 encoded string")
+		sub.StringVar(&cryptoAD.Encoded, "metadata", "", "optional associated metadata is provided base64 encoded string")
 
-		sub.StringVar(&ad.file, "M", "", "optional associated metadata is all bytes read from provided path")
-		sub.StringVar(&ad.file, "metadata-file", "", "optional associated metadata is all bytes read from provided path")
+		sub.StringVar(&cryptoAD.File, "M", "", "optional associated metadata is all bytes read from provided path")
+		sub.StringVar(&cryptoAD.File, "metadata-file", "", "optional associated metadata is all bytes read from provided path")
 
-		sub.StringVar(&nonce.encoded, "n", "", "nonce is provided as base64 encoded string")
-		sub.StringVar(&nonce.encoded, "nonce", "", "nonce is provided as base64 encoded string")
+		sub.StringVar(&cryptoNonce.Encoded, "n", "", "nonce is provided as base64 encoded string")
+		sub.StringVar(&cryptoNonce.Encoded, "nonce", "", "nonce is provided as base64 encoded string")
 
-		sub.StringVar(&nonce.file, "N", "", "nonce is first 16 bytes read from provided path")
-		sub.StringVar(&nonce.file, "nonce-file", "", "nonce is first 16 bytes read from provided path")
+		sub.StringVar(&cryptoNonce.File, "N", "", "nonce is first 16 bytes read from provided path")
+		sub.StringVar(&cryptoNonce.File, "nonce-file", "", "nonce is first 16 bytes read from provided path")
 
 		sub.StringVar(&outputFile, "o", "", "output file path: ciphertext for encryption, plaintext for decryption")
 		sub.StringVar(&outputFile, "output-file", "", "output file path: ciphertext for encryption, plaintext for decryption")
@@ -79,13 +69,16 @@ func main() {
 		sub.BoolVar(&useStdOut, "p", false, "send encryption/decryption output to STDOUT")
 		sub.BoolVar(&useStdOut, "pipe-output", false, "send encryption/decryption output to STDOUT")
 
-		sub.BoolVar(&quiet, "q", false, "quiet mode - only the checksum is printed out")
-		sub.BoolVar(&quiet, "quiet", false, "quiet mode - only the checksum is printed out")
+		sub.BoolVar(&quiet, "q", false, "quiet mode - no console reporting")
+		sub.BoolVar(&quiet, "quiet", false, "quiet mode - no console reporting")
+
+		sub.StringVar(&cfgFile, "C", "", "quiet mode - no console reporting")
+		sub.StringVar(&cfgFile, "cfg-file", "", "quiet mode - no console reporting")
 
 	}
 
 	if len(os.Args) < 2 {
-		consolePrintln("expected 'encrypt' or 'encrypt' subcommands")
+		console.Println("expected 'encrypt' or 'encrypt' subcommands")
 		printHelp()
 		os.Exit(1)
 	}
@@ -98,26 +91,41 @@ func main() {
 	case "decrypt":
 		decryptCmd.Parse(os.Args[2:])
 		command = decryptCmd
+		cfgShouldExist = true
 	default:
-		consolePrintln("expected 'encrypt' or 'encrypt' subcommands")
+		console.Println("expected 'encrypt' or 'encrypt' subcommands")
 		printHelp()
 		os.Exit(1)
 	}
 
 	var err error
-	err = key.ParseInputs()
+	cfgDataEmpty := parsing.Configuration{}
+	cfgData := &cfgDataEmpty
+	if cfgFile != "" {
+		cfgData, err = parsing.ReadConfig(cfgFile, cfgShouldExist)
+		if err != nil {
+			console.Printf("xoodyak config file parsing: %s", err)
+		}
+	}
+
+	err = cryptoKey.Parse(cfgData.Key)
 	if err != nil {
-		consolePrintf("xoodyak key error: %s\n", err)
+		console.Printf("xoodyak key error: %s\n", err)
 		os.Exit(1)
 	}
-	err = ad.ParseInputs()
+	err = cryptoAD.Parse(cfgData.Metadata)
 	if err != nil {
-		consolePrintf("xoodyak metadata error: %s\n", err)
+		console.Printf("xoodyak metadata error: %s\n", err)
 		os.Exit(1)
 	}
-	err = nonce.ParseInputs()
+	err = cryptoNonce.Parse(cfgData.Nonce)
 	if err != nil {
-		consolePrintf("xoodyak nonce error: %s\n", err)
+		console.Printf("xoodyak nonce error: %s\n", err)
+		os.Exit(1)
+	}
+
+	if (cryptoKey.Generated || cryptoNonce.Generated) && cfgFile == "" {
+		console.Printf("xoodyak nonce error: %s\n", err)
 		os.Exit(1)
 	}
 
@@ -144,14 +152,14 @@ func main() {
 	if useStdOut {
 		_, err := os.Stdout.Stat()
 		if err != nil {
-			err = fmt.Errorf("xoodyak-crypt: cannot stat STDOUT - %w", err)
+			console.Printf("xoodyak-crypt: cannot stat STDOUT - %s", err)
 			os.Exit(1)
 		}
 		outputFd = os.Stdout
 	} else {
 		outputFd, err = os.Create(outputFileTmp)
 		if err != nil {
-			err = fmt.Errorf("xoodyak encrypt: %w", err)
+			console.Printf("xoodyak encrypt: %s", err)
 			os.Exit(1)
 		}
 		defer outputFd.Close()
@@ -163,11 +171,11 @@ func main() {
 	if useStdIn {
 		info, err := os.Stdin.Stat()
 		if err != nil {
-			err = fmt.Errorf("xoodyak-crypt: cannot stat STDIN - %w", err)
+			console.Printf("xoodyak-crypt: cannot stat STDIN - %s", err)
 			os.Exit(1)
 		}
 		if info.Mode()&os.ModeNamedPipe == 0 && info.Mode()&os.ModeCharDevice == 0 {
-			err = fmt.Errorf("xoodyak-crypt: STDIN not a valid pipe")
+			console.Println("xoodyak-crypt: STDIN not a valid pipe")
 			os.Exit(1)
 		}
 		inputFd = bufio.NewReader(os.Stdin)
@@ -175,7 +183,7 @@ func main() {
 	} else {
 		inputFd, err = os.Open(command.Arg(0))
 		if err != nil {
-			err = fmt.Errorf("xoodyak encrypt: %w", err)
+			console.Printf("xoodyak encrypt: %s", err)
 			os.Exit(1)
 		}
 	}
@@ -185,14 +193,23 @@ func main() {
 	// Perform encryption or decryption
 	switch command.Name() {
 	case "encrypt":
-		err = encryptStream(key.raw, ad.raw, nonce.raw, inputFdBuf, outputFdBuf)
+		err = encryptStream(cryptoKey.Raw, cryptoAD.Raw, cryptoNonce.Raw, inputFdBuf, outputFdBuf)
+		if cfgFile != "" {
+			cfgData.Key = cryptoKey.Encoded
+			cfgData.Nonce = cryptoNonce.Encoded
+			cfgData.Metadata = cryptoAD.Encoded
+			if err = parsing.SaveConfig(cfgData, cfgFile); err != nil {
+				console.Printf("xoodyak config file save error: %s", err)
+				os.Exit(1)
+			}
+		}
 	case "decrypt":
-		err = decryptStream(key.raw, ad.raw, nonce.raw, inputFdBuf, outputFdBuf)
+		err = decryptStream(cryptoKey.Raw, cryptoAD.Raw, cryptoNonce.Raw, inputFdBuf, outputFdBuf)
 	default:
 		err = fmt.Errorf("invalid crypt command: %s", command.Name())
 	}
 	if err != nil {
-		consolePrintf("xoodyak crypt error: %s", err)
+		console.Printf("xoodyak crypt error: %s", err)
 		os.Exit(1)
 	}
 	outputFdBuf.Flush()
@@ -201,29 +218,15 @@ func main() {
 	if !useStdOut {
 		err = os.Rename(outputFileTmp, outputFile)
 		if err != nil {
-			consolePrintf("xoodyak rename: %s", err)
+			console.Printf("xoodyak rename: %s", err)
 			os.Exit(1)
 		}
 	}
-	consolePrintf("%s operation successful\n", command.Name())
-}
-
-func consolePrintf(format string, a ...interface{}) (n int, err error) {
-	if !quiet {
-		return fmt.Fprintf(os.Stderr, format, a...)
-	}
-	return 0, nil
-}
-
-func consolePrintln(a ...interface{}) (n int, err error) {
-	if !quiet {
-		return fmt.Fprintln(os.Stderr, a...)
-	}
-	return 0, nil
+	console.Printf("%s operation successful\n", command.Name())
 }
 
 func printHelp() {
-	consolePrintf(`Usage: %s [OPTION]... [FILE].. 
+	console.Printf(`Usage: %s [OPTION]... [FILE].. 
 Calculate and print the Xoodyak hash and number of bytes processed
 
 When no FILE is provided, read from STDIN
@@ -262,74 +265,6 @@ func decryptStream(key, ad, nonce []byte, ciphertext io.Reader, plaintext io.Wri
 	if err != nil {
 		err = fmt.Errorf("xoodyak decrypt: %w", err)
 		return err
-	}
-	return nil
-}
-
-func (ct *component) ParseInputs() error {
-	var err error
-	switch {
-	case ct.file != "":
-		fd, err := os.Open(ct.file)
-		if err != nil {
-			if err != nil {
-				return fmt.Errorf("%s file: %w", ct.name, err)
-			}
-		}
-		defer fd.Close()
-
-		fileinfo, err := fd.Stat()
-		if err != nil {
-			return fmt.Errorf("%s file: %w", ct.name, err)
-		}
-		readsize := fileinfo.Size()
-		if readsize == 0 && ct.length > 0 {
-			return fmt.Errorf("%s file (%s) contains 0 bytes; requires %d bytes", ct.name, ct.file, ct.length)
-		}
-		if ct.length > 0 {
-			readsize = int64(ct.length)
-		}
-		ct.raw = make([]byte, readsize)
-		n, err := fd.Read(ct.raw)
-
-		if err != nil {
-			return fmt.Errorf("%s file: %w", ct.name, err)
-
-		}
-		if n < ct.length {
-			consolePrintf("%s file (%s): must be at least %d bytes long (input is %d bytes)\n", ct.name, ct.file, ct.length, n)
-		}
-		ct.length = len(ct.raw)
-
-	case ct.encoded != "":
-		ct.raw, err = base64.StdEncoding.DecodeString(ct.encoded)
-		if err != nil {
-			return fmt.Errorf("%s string decode: %w", ct.name, err)
-
-		}
-		if len(ct.raw) < ct.length {
-			return fmt.Errorf("%s string: decoded content must be at least %d bytes (input is %d bytes)", ct.name, ct.length, len(ct.raw))
-		}
-		if ct.length > 0 && len(ct.raw) > ct.length {
-			// Truncate the raw bytes to the desired length
-			ct.raw = ct.raw[:ct.length]
-		}
-		ct.length = len(ct.raw)
-
-	default:
-		if ct.length <= 0 {
-			return nil
-		}
-		ct.raw = make([]byte, ct.length)
-		_, err := rand.Read(ct.raw[:])
-		if err != nil {
-			return fmt.Errorf("%s generation: %s", ct.name, err)
-
-		}
-		ct.generated = true
-	}
-	if ct.encoded == "" {
-		ct.encoded = base64.StdEncoding.EncodeToString(ct.raw)
 	}
 	return nil
 }
