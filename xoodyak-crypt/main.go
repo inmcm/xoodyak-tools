@@ -43,38 +43,37 @@ func main() {
 	encryptCmd := flag.NewFlagSet("encrypt", flag.ExitOnError)
 	decryptCmd := flag.NewFlagSet("decrypt", flag.ExitOnError)
 
-	// Add all common argument flags to sub-commands
+	// Add all common argument flags to sub-commands - see printHelp() for per argument docstrings
 	for _, sub := range []*flag.FlagSet{encryptCmd, decryptCmd} {
-		sub.StringVar(&cryptoKey.Encoded, "k", "", "encrypt/decrypt key is provided as base64 encoded string")
-		sub.StringVar(&cryptoKey.Encoded, "key", "", "encrypt/decrypt key is provided as base64 encoded string")
+		sub.StringVar(&cryptoKey.Encoded, "k", "", "")
+		sub.StringVar(&cryptoKey.Encoded, "key", "", "")
 
-		sub.StringVar(&cryptoKey.File, "K", "", "encryption key is first 16 bytes read from provided path")
-		sub.StringVar(&cryptoKey.File, "key-file", "", "encryption key is first 16 bytes read from provided path")
+		sub.StringVar(&cryptoKey.File, "K", "", "")
+		sub.StringVar(&cryptoKey.File, "key-file", "", "")
 
-		sub.StringVar(&cryptoAD.Encoded, "m", "", "optional associated metadata is provided base64 encoded string")
-		sub.StringVar(&cryptoAD.Encoded, "metadata", "", "optional associated metadata is provided base64 encoded string")
+		sub.StringVar(&cryptoAD.Encoded, "m", "", "")
+		sub.StringVar(&cryptoAD.Encoded, "metadata", "", "")
 
-		sub.StringVar(&cryptoAD.File, "M", "", "optional associated metadata is all bytes read from provided path")
-		sub.StringVar(&cryptoAD.File, "metadata-file", "", "optional associated metadata is all bytes read from provided path")
+		sub.StringVar(&cryptoAD.File, "M", "", "")
+		sub.StringVar(&cryptoAD.File, "metadata-file", "", "")
 
-		sub.StringVar(&cryptoNonce.Encoded, "n", "", "nonce is provided as base64 encoded string")
-		sub.StringVar(&cryptoNonce.Encoded, "nonce", "", "nonce is provided as base64 encoded string")
+		sub.StringVar(&cryptoNonce.Encoded, "n", "", "")
+		sub.StringVar(&cryptoNonce.Encoded, "nonce", "", "")
 
-		sub.StringVar(&cryptoNonce.File, "N", "", "nonce is first 16 bytes read from provided path")
-		sub.StringVar(&cryptoNonce.File, "nonce-file", "", "nonce is first 16 bytes read from provided path")
+		sub.StringVar(&cryptoNonce.File, "N", "", "")
+		sub.StringVar(&cryptoNonce.File, "nonce-file", "", "")
 
-		sub.StringVar(&outputFile, "o", "", "output file path: ciphertext for encryption, plaintext for decryption")
-		sub.StringVar(&outputFile, "output-file", "", "output file path: ciphertext for encryption, plaintext for decryption")
+		sub.StringVar(&outputFile, "o", "", "")
+		sub.StringVar(&outputFile, "output-file", "", "")
 
-		sub.BoolVar(&useStdOut, "p", false, "send encryption/decryption output to STDOUT")
-		sub.BoolVar(&useStdOut, "pipe-output", false, "send encryption/decryption output to STDOUT")
+		sub.BoolVar(&useStdOut, "p", false, "")
+		sub.BoolVar(&useStdOut, "pipe-output", false, "")
 
-		sub.BoolVar(&quiet, "q", false, "quiet mode - no console reporting")
-		sub.BoolVar(&quiet, "quiet", false, "quiet mode - no console reporting")
+		sub.BoolVar(&quiet, "q", false, "")
+		sub.BoolVar(&quiet, "quiet", false, "")
 
-		sub.StringVar(&cfgFile, "C", "", "quiet mode - no console reporting")
-		sub.StringVar(&cfgFile, "cfg-file", "", "quiet mode - no console reporting")
-
+		sub.StringVar(&cfgFile, "C", "", "")
+		sub.StringVar(&cfgFile, "cfg-file", "", "")
 	}
 
 	if len(os.Args) < 2 {
@@ -226,12 +225,28 @@ func main() {
 }
 
 func printHelp() {
-	console.Printf(`Usage: %s [OPTION]... [FILE].. 
-Calculate and print the Xoodyak hash and number of bytes processed
+	console.Printf(`Usage: %s encrypt|decrypt [OPTIONS]... [FILE]
+Encrypt or Decrypt provided bytes using a provided (or generated) key, nonce and optional metadata
+Encryption generates ciphertext bytes and an authentication tag
+Decryption returns the original plaintext input
 
 When no FILE is provided, read from STDIN
-	-q, --quiet         only print the calculated checksum 
-	-h, --help          print this message
+	-q, -quiet            only print the calculated checksum
+	-h, -help             print this message
+	-C, -cfg-file         encryption/decryption configuration parameters (key,nonce,metadata) are provided
+	                      via a JSON encoded configuration file
+	                      for encryption operations, parameters are written to config file
+	                      following processing, including generated key/nonce data
+	                      Config format: '{"key":"<KEY>","nonce":"<NONCE>","ad":"<METADATA>"}'
+	-k, -key              encrypt/decrypt key is provided as base64 encoded string
+	-K, -key-file         encryption key is first 16 bytes read from file at the provided path
+	-m, -metadata         optional associated metadata is provided as base64 encoded string
+	-M, -metadata-file    optional associated metadata is all bytes read from file at provided path
+	-n, -nonce            nonce is provided as base64 encoded string
+	-N, -nonce-file       nonce is first 16 bytes read from file at provided path
+	-o, -output-file      output file path: ciphertext for encryption, plaintext for decryption
+	                      filename will be generated from input file name if not provided
+	-p, -pipe-output      encryption/decryption result will be passed to STDOUT instead of a file
 `, os.Args[0])
 }
 
