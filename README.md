@@ -1,3 +1,5 @@
+[![Go Report Card](https://goreportcard.com/badge/github.com/inmcm/xoodyak-tools)](https://goreportcard.com/report/github.com/inmcm/xoodyak-tools)
+
 # xoodyak-tools
 
 Collection of command-line utilities to use the Xoodyak cryptographic primitives as defined in
